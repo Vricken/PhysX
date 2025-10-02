@@ -213,21 +213,38 @@ class CMakePreset:
         # Second pass: Add all switches to output
         for cmakeSwitch in self.cmakeSwitches:
             outString = outString + ' ' + cmakeSwitch
+
+        # Visual studio vc16 and above allow you to use a different compiler
+        # toolset than the one that matches the generator (ie, vs2022 can compile
+        # using v142 toolset).
+        vs_compiler_versions = {
+            'vc16': 'v142',
+            'vc17': 'v143'
+        }
+
+        toolset_values = []
+
+        # if on windows, specify the toolset version
+        if self.compiler in vs_compiler_versions and self.generator != 'ninja':
+            toolset_values.append(vs_compiler_versions[self.compiler])
             
         # Only add CUDA paths if GPU is enabled
         if gpuEnabled:
             if os.environ.get('PM_CUDA_PATH') is not None:
                 if os.environ.get('PM_CUDA_PATH') is not None:
-                    outString = outString + ' -DCUDAToolkit_ROOT_DIR=' + \
-                            os.environ['PM_CUDA_PATH']
+                    outString = outString + ' -DCUDAToolkit_ROOT_DIR=\"' + \
+                            os.environ['PM_CUDA_PATH'] + '\"'
                     if self.compiler in ['vc15', 'vc16', 'vc17'] and self.generator != 'ninja':
-                        outString = outString + ' -T cuda=' + os.environ['PM_CUDA_PATH']
+                       toolset_values.append('cuda=' + os.environ['PM_CUDA_PATH'])
                     # TODO: Need to do the same for gcc (aarch64) when we package it with Packman
                     elif self.compiler == 'clang':
                         if os.environ.get('PM_clang_PATH') is not None:
                             outString = outString + ' -DCMAKE_CUDA_HOST_COMPILER=' + \
                                 os.environ['PM_clang_PATH'] + '/bin/clang++'
-                        
+        
+        if len(toolset_values) > 0:
+            outString = outString + ' -T\"' + ','.join(toolset_values) + '\"'
+
         return outString
 
     def getCMakeParams(self):
@@ -240,16 +257,23 @@ class CMakePreset:
         cmake_modules_root = os.environ['PHYSX_ROOT_DIR'] + '/source/compiler/cmake/modules'
         outString = ' '
 
+        # Visual Studio 2019 and above can compile using different toolsets than
+        # the come with - for example, you can use vs2022 (vc143) to compile
+        # using the v142 toolset using the `-T v142` switch.  To take advantage of this,
+        # don't specify the generator (it will use the default one) and instead specify
+        # the compiler toolchain in the -T section above.
         vs_versions = {
             'vc15': '\"Visual Studio 15 2017\"',
-            'vc16': '\"Visual Studio 16 2019\"',
-            'vc17': '\"Visual Studio 17 2022\"'
+            'vc16': None, # do not specify -G
+            'vc17': None  # do not specify -G
         }
-
-        # Visual studio
+        
         if self.compiler in vs_versions:
-            generator = '-G \"Ninja Multi-Config\"' if self.generator == 'ninja' else '-G ' + vs_versions[self.compiler]
-            outString += generator
+            # use the default generator unless ninja is specified.
+            if self.generator == 'ninja':
+                outString += '-G \"Ninja Multi-Config\"'
+            elif vs_versions[self.compiler] is not None:
+                outString += '-G ' + vs_versions[self.compiler]
         # Windows crosscompile
         elif self.compiler == 'x86_64-w64-mingw32-g++':
             outString = outString + '-G \"Ninja\"'
